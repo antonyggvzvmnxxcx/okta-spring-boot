@@ -15,27 +15,35 @@
  */
 package com.okta.spring.boot.oauth;
 
+import com.okta.spring.boot.oauth.config.OktaOAuth2Properties;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 
 import java.util.Collection;
-import java.util.HashSet;
 
 final class OktaJwtAuthenticationConverter extends JwtAuthenticationConverter {
 
-    private final String groupClaim;
-
     public OktaJwtAuthenticationConverter(String groupClaim) {
-        this.groupClaim = groupClaim;
+        JwtGrantedAuthoritiesConverter originalConverter = new JwtGrantedAuthoritiesConverter();
+        this.setJwtGrantedAuthoritiesConverter(source -> {
+            Collection<GrantedAuthority> result = originalConverter.convert(source);
+            result.addAll(TokenUtil.tokenClaimsToAuthorities(source.getClaims(), groupClaim));
+            return result;
+        });
     }
 
-    @Override
-    protected Collection<GrantedAuthority> extractAuthorities(Jwt jwt) {
+    public OktaJwtAuthenticationConverter(OktaOAuth2Properties oktaOAuth2Properties) {
+        JwtGrantedAuthoritiesConverter originalConverter = new JwtGrantedAuthoritiesConverter();
 
-        Collection<GrantedAuthority> result = new HashSet<>(super.extractAuthorities(jwt));
-        result.addAll(TokenUtil.tokenClaimsToAuthorities(jwt.getClaims(), groupClaim));
+        if (oktaOAuth2Properties.getAuthoritiesClaimName() != null) {
+            originalConverter.setAuthoritiesClaimName(oktaOAuth2Properties.getAuthoritiesClaimName());
+        }
 
-        return result;
+        this.setJwtGrantedAuthoritiesConverter(source -> {
+            Collection<GrantedAuthority> result = originalConverter.convert(source);
+            result.addAll(TokenUtil.tokenClaimsToAuthorities(source.getClaims(), oktaOAuth2Properties.getGroupsClaim()));
+            return result;
+        });
     }
 }

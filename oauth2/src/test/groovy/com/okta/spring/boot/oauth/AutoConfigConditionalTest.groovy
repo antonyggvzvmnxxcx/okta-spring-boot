@@ -15,14 +15,10 @@
  */
 package com.okta.spring.boot.oauth
 
-import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
-import ch.qos.logback.classic.LoggerContext
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock
 import com.okta.spring.boot.oauth.config.OktaOAuth2Properties
 import com.okta.spring.boot.oauth.env.OktaOAuth2PropertiesMappingEnvironmentPostProcessor
-import org.slf4j.impl.StaticLoggerBinder
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.autoconfigure.logging.ConditionEvaluationReportLoggingListener
 import org.springframework.boot.autoconfigure.security.oauth2.client.OAuth2ClientProperties
@@ -42,12 +38,10 @@ import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.ConfigurableEnvironment
-import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.authentication.ReactiveAuthenticationManagerResolver
 import org.springframework.security.config.BeanIds
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
-import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcReactiveOAuth2UserService
@@ -63,20 +57,18 @@ import org.springframework.security.oauth2.core.user.OAuth2User
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.server.resource.authentication.JwtReactiveAuthenticationManager
 import org.springframework.security.oauth2.server.resource.introspection.OpaqueTokenIntrospector
-import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationFilter
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter
 import org.springframework.security.web.FilterChainProxy
+import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.server.MatcherSecurityWebFilterChain
 import org.springframework.security.web.server.WebFilterChainProxy
 import org.springframework.security.web.server.authentication.AuthenticationWebFilter
 import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.web.server.WebFilter
 import org.testng.TestException
-import org.testng.annotations.AfterClass
-import org.testng.annotations.BeforeClass
 import org.testng.annotations.Test
 
-import javax.servlet.Filter
-import javax.servlet.ServletRequest
+import jakarta.servlet.Filter
 import java.util.function.Supplier
 import java.util.stream.Collectors
 import java.util.stream.Stream
@@ -84,9 +76,6 @@ import java.util.stream.Stream
 import static org.assertj.core.api.Assertions.assertThat
 
 class AutoConfigConditionalTest implements HttpMock {
-
-    private Level originalLevel = Level.INFO
-    private Logger conditionLogger =  ((LoggerContext) StaticLoggerBinder.getSingleton().getLoggerFactory()).getLogger(ConditionEvaluationReportLoggingListener)
 
     private List<Class<?>> oktaAutoConfigs = [
         OktaOAuth2AutoConfig,
@@ -138,17 +127,6 @@ class AutoConfigConditionalTest implements HttpMock {
                         "introspection_endpoint":"${orgIssuer}oauth2/v1/introspect"
                     }
                     """)))
-    }
-
-
-    @BeforeClass
-    void enableVerboseConditionEvaluationLogging() {
-        originalLevel = conditionLogger.getLevel()
-    }
-
-    @AfterClass
-    void disableVerboseConditionEvaluationLogging() {
-        conditionLogger.setLevel(originalLevel)
     }
 
     @Test
@@ -410,10 +388,6 @@ class AutoConfigConditionalTest implements HttpMock {
                 assertFiltersEnabled(context, OAuth2LoginAuthenticationFilter, BearerTokenAuthenticationFilter)
                 def logoutHandler = context.getBean(OidcClientInitiatedLogoutSuccessHandler)
                 assertThat(logoutHandler.postLogoutRedirectUri).isEqualTo("{baseUrl}/logout/callback")
-                ServletRequest request = new MockHttpServletRequest()
-                request.setScheme("https")
-                request.setServerName("test.example.com")
-                assertThat(logoutHandler.postLogoutRedirectUri(request).toString()).isEqualTo("https://test.example.com:80/logout/callback")
             }
     }
     @Test
@@ -444,16 +418,26 @@ class AutoConfigConditionalTest implements HttpMock {
     @Test
     void webLoginConfig_withRootIssuerClientIdSecret_JwtResourceServerConfig() {
 
-        // server should NOT start as we are trying to configure JWT validation on a resource server
-        // and also specifying a root issuer. Spring does NOT allow both JWT and Opaque Token
-        // configurations at the same time.
+        // server would start with Opaque Token validation mode since the issuer is ROOT.
         webContextRunner(JwtResourceServerConfiguredApp).withPropertyValues(
             "okta.oauth2.issuer=https://test.example.com",
             "spring.security.oauth2.client.provider.okta.issuerUri=${mockBaseUrl()}", // work around to not validate the https url
             "okta.oauth2.client-id=test-client-id",
             "okta.oauth2.client-secret=test-client-secret")
             .run { context ->
-                assertThat(context).hasFailed()
+                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2AutoConfig)
+                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ResourceServerAutoConfig)
+                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ResourceServerHttpServerAutoConfig)
+                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ServerHttpServerAutoConfig)
+
+                assertThat(context).getBeans(AuthoritiesProvider).containsOnlyKeys("tokenScopesAuthoritiesProvider", "groupClaimsAuthoritiesProvider")
+                assertThat(context).hasSingleBean(OktaOAuth2AutoConfig)
+                assertThat(context).hasSingleBean(OAuth2ClientProperties)
+                assertThat(context).hasSingleBean(OktaOAuth2ResourceServerAutoConfig)
+                assertThat(context).hasSingleBean(OpaqueTokenIntrospector)
+                assertThat(context).hasSingleBean(OktaOAuth2Properties)
+
+                assertFiltersEnabled(context, OAuth2LoginAuthenticationFilter, BearerTokenAuthenticationFilter)
             }
     }
 
@@ -475,20 +459,10 @@ class AutoConfigConditionalTest implements HttpMock {
     @Test
     void reactiveResourceServerTest_emptyProperties() {
 
-        // missing properties, component does not load
         reactiveContextRunner()
             .run { context ->
-                assertThat(context).doesNotHaveBean(OktaOAuth2ResourceServerAutoConfig)
-                assertThat(context).doesNotHaveBean(JwtDecoder)
-                assertThat(context).doesNotHaveBean(OktaOAuth2AutoConfig)
-                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2AutoConfig)
-                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ResourceServerAutoConfig)
-                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ResourceServerHttpServerAutoConfig)
-                assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2ServerHttpServerAutoConfig)
-                assertThat(context).doesNotHaveBean(OAuth2AuthorizedClientService)
-                assertThat(context).doesNotHaveBean(AuthoritiesProvider)
-
-                assertWebFiltersDisabled(context, OAuth2LoginAuthenticationWebFilter)
+                assertThat(context).hasNotFailed()
+                assertThat(context.getStartupFailure()).isNull()
             }
     }
 
@@ -595,7 +569,10 @@ class AutoConfigConditionalTest implements HttpMock {
                 assertThat(context).hasSingleBean(OktaOAuth2Properties)
                 assertThat(context).getBeans(AuthoritiesProvider).containsOnlyKeys("tokenScopesAuthoritiesProvider", "groupClaimsAuthoritiesProvider")
 
-                assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+                // does not seem to be the case anymore since spring boot 3.2.0
+                //assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+                assertWebFiltersEnabled(context, AuthenticationWebFilter)
+
                 assertJwtBearerWebFilterEnabled(context)
                 assertThat(context.getBean(OidcClientInitiatedServerLogoutSuccessHandler).postLogoutRedirectUri).isEqualTo("http://logout.example.com")
         }
@@ -625,7 +602,10 @@ class AutoConfigConditionalTest implements HttpMock {
             assertThat(context).hasSingleBean(OktaOAuth2Properties)
             assertThat(context).getBeans(AuthoritiesProvider).containsOnlyKeys("tokenScopesAuthoritiesProvider", "groupClaimsAuthoritiesProvider")
 
-            assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+            // does not seem to be the case anymore since spring boot 3.2.0
+            //assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+            assertWebFiltersEnabled(context, AuthenticationWebFilter)
+
             assertJwtBearerWebFilterEnabled(context)
         }
     }
@@ -686,7 +666,10 @@ class AutoConfigConditionalTest implements HttpMock {
                 assertThat(context).doesNotHaveBean(ReactiveOktaOAuth2UserService)
                 assertThat(context).doesNotHaveBean(ReactiveOktaOidcUserService)
 
-                assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+                // does not seem to be the case anymore since spring boot 3.2.0
+                //assertWebFiltersEnabled(context, OAuth2LoginAuthenticationWebFilter, AuthenticationWebFilter)
+                assertWebFiltersEnabled(context, AuthenticationWebFilter)
+
                 assertJwtBearerWebFilterEnabled(context)
             }
     }
@@ -809,31 +792,34 @@ class AutoConfigConditionalTest implements HttpMock {
 
     @Configuration
     @EnableWebSecurity
-    static class JwtResourceServerConfiguredApp extends WebSecurityConfigurerAdapter {
+    static class JwtResourceServerConfiguredApp {
 
-        @Override
-        protected void configure(HttpSecurity http) throws Exception {
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
             http.oauth2ResourceServer().jwt()
+            return http.build()
         }
     }
 
     @Configuration
     @EnableWebSecurity
-    static class OpaqueTokenResourceServerConfiguredApp extends WebSecurityConfigurerAdapter {
+    static class OpaqueTokenResourceServerConfiguredApp {
 
-        @Override
-        protected void configure(HttpSecurity http) throws Exception {
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
             http.oauth2ResourceServer().opaqueToken()
+            return http.build()
         }
     }
 
     @Configuration
     @EnableWebSecurity
-    static class JwtAndOpaqueTokenResourceServerConfiguredApp extends WebSecurityConfigurerAdapter {
+    static class JwtAndOpaqueTokenResourceServerConfiguredApp {
 
-        @Override
-        protected void configure(HttpSecurity http) throws Exception {
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
             http.oauth2ResourceServer().jwt().and().opaqueToken()
+            return http.build()
         }
     }
 

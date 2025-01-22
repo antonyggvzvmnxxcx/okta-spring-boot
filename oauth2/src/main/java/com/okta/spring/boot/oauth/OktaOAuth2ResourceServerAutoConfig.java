@@ -17,7 +17,9 @@ package com.okta.spring.boot.oauth;
 
 import com.okta.commons.lang.Strings;
 import com.okta.spring.boot.oauth.config.OktaOAuth2Properties;
+import com.okta.spring.boot.oauth.http.Auth0ClientRequestInterceptor;
 import com.okta.spring.boot.oauth.http.UserAgentRequestInterceptor;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -27,7 +29,6 @@ import org.springframework.boot.autoconfigure.security.oauth2.resource.servlet.O
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.client.support.BasicAuthenticationInterceptor;
 import org.springframework.http.converter.FormHttpMessageConverter;
@@ -40,7 +41,6 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.oauth2.server.resource.introspection.NimbusOpaqueTokenIntrospector;
 import org.springframework.security.oauth2.server.resource.introspection.OpaqueTokenIntrospector;
 import org.springframework.web.client.RestTemplate;
@@ -51,8 +51,9 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Optional;
+import java.util.Objects;
 
-@Configuration
+@AutoConfiguration
 @AutoConfigureBefore(OAuth2ResourceServerAutoConfiguration.class)
 @ConditionalOnClass(JwtAuthenticationToken.class)
 @ConditionalOnOktaResourceServerProperties
@@ -62,9 +63,7 @@ class OktaOAuth2ResourceServerAutoConfig {
 
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter(OktaOAuth2Properties oktaOAuth2Properties) {
-        OktaJwtAuthenticationConverter converter = new OktaJwtAuthenticationConverter(oktaOAuth2Properties.getGroupsClaim());
-        converter.setJwtGrantedAuthoritiesConverter(new JwtGrantedAuthoritiesConverter());
-        return converter;
+        return new OktaJwtAuthenticationConverter(oktaOAuth2Properties);
     }
 
     @Bean
@@ -81,7 +80,7 @@ class OktaOAuth2ResourceServerAutoConfig {
 
     static RestTemplate restTemplate(OktaOAuth2Properties oktaOAuth2Properties) {
 
-        Proxy proxy;
+        Proxy proxy = null;
 
         OktaOAuth2Properties.Proxy proxyProperties = oktaOAuth2Properties.getProxy();
         Optional<BasicAuthenticationInterceptor> basicAuthenticationInterceptor = Optional.empty();
@@ -94,17 +93,18 @@ class OktaOAuth2ResourceServerAutoConfig {
                 basicAuthenticationInterceptor = Optional.of(new BasicAuthenticationInterceptor(proxyProperties.getUsername(),
                     proxyProperties.getPassword()));
             }
-        } else {
-            proxy = Proxy.NO_PROXY;
         }
 
         RestTemplate restTemplate = new RestTemplate(Arrays.asList(
             new FormHttpMessageConverter(), new OAuth2AccessTokenResponseHttpMessageConverter(), new StringHttpMessageConverter()
         ));
         restTemplate.getInterceptors().add(new UserAgentRequestInterceptor());
+        restTemplate.getInterceptors().add(new Auth0ClientRequestInterceptor());
         basicAuthenticationInterceptor.ifPresent(restTemplate.getInterceptors()::add);
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setProxy(proxy);
+        if (Objects.nonNull(proxy)) {
+            requestFactory.setProxy(proxy);
+        }
         restTemplate.setRequestFactory(requestFactory);
         return restTemplate;
     }

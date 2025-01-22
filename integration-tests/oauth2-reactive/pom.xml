@@ -20,7 +20,7 @@
     <parent>
         <groupId>com.okta.spring</groupId>
         <artifactId>okta-spring-boot-parent</artifactId>
-        <version>2.1.5-SNAPSHOT</version>
+        <version>3.0.8-SNAPSHOT</version>
         <relativePath>../..</relativePath>
     </parent>
 
@@ -35,6 +35,12 @@
         <dependency>
             <groupId>com.okta.spring</groupId>
             <artifactId>okta-spring-boot-integration-tests-common-reactive</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.okta.spring</groupId>
@@ -67,9 +73,9 @@
                     <configuration>
                         <dependenciesToScan>
                             <dependency>com.okta.oidc.tck:okta-oidc-tck</dependency>
+                            <dependency>com.okta.spring:okta-spring-boot-integration-tests-common-servlet</dependency>
                         </dependenciesToScan>
                         <reuseForks>true</reuseForks>
-                        <parallel>classesAndMethods</parallel>
                         <forkCount>1</forkCount>
                     </configuration>
                 </plugin>

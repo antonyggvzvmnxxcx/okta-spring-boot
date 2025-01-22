@@ -15,6 +15,7 @@
  */
 package com.okta.spring.boot.oauth
 
+import com.okta.spring.boot.oauth.config.OktaOAuth2Properties
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.oauth2.jwt.Jwt
 import org.testng.annotations.Test
@@ -36,7 +37,7 @@ class OktaJwtAuthenticationConverterTest {
                 myGroups: ["g1", "g2"]
         ])
 
-        def authorities = new OktaJwtAuthenticationConverter("myGroups").extractAuthorities(jwt)
+        def authorities = new OktaJwtAuthenticationConverter("myGroups").convert(jwt).getAuthorities()
         assertThat authorities, hasItems(
                 new SimpleGrantedAuthority("SCOPE_one"),
                 new SimpleGrantedAuthority("SCOPE_two"),
@@ -46,10 +47,32 @@ class OktaJwtAuthenticationConverterTest {
     }
 
     @Test
+    void extractAuthorities_customClaimNameTest() {
+
+        // these maps must not be empty
+        def jwt = new Jwt("foo", Instant.now(), Instant.now().plusMillis(1000L), [simple: "value"], [
+            permissions: ["one", "two", "three"],
+            myGroups   : ["g1", "g2"]
+        ])
+
+        def properties = new OktaOAuth2Properties(null)
+        properties.setGroupsClaim("myGroups")
+        properties.setAuthoritiesClaimName("permissions")
+
+        def authorities = new OktaJwtAuthenticationConverter(properties).convert(jwt).getAuthorities()
+        assertThat authorities, hasItems(
+            new SimpleGrantedAuthority("SCOPE_one"),
+            new SimpleGrantedAuthority("SCOPE_two"),
+            new SimpleGrantedAuthority("SCOPE_three"),
+            new SimpleGrantedAuthority("g1"),
+            new SimpleGrantedAuthority("g2"))
+    }
+
+    @Test
     void extractAuthorities_emptyTest() {
         def jwt = new Jwt("foo", Instant.now(), Instant.now().plusMillis(1000L), [simple: "value"], [simple: "value"]) // these maps must not be empty
 
-        def authorities = new OktaJwtAuthenticationConverter("myGroups").extractAuthorities(jwt)
+        def authorities = new OktaJwtAuthenticationConverter("myGroups").convert(jwt).getAuthorities()
         assertThat authorities, hasSize(0)
     }
 }
